@@ -17,7 +17,7 @@ subcommand of the CLI — the `ghdrop` binary stays purely user-facing.
 
 ```sh
 vp install
-vpr deploy         # = node scripts/deploy.ts
+vpr deploy         # = node scripts/admin.ts deploy
 ```
 
 The task handles everything:
@@ -70,8 +70,13 @@ reads it out of alchemy state on demand:
 vpr keys create --label ci [--save]      # mint a key (prints it once)
 vpr keys list                            # keyId / created / label
 vpr keys revoke <keyId>
-vpr keys create --stage prod             # another stage
+vpr admin --stage prod keys list         # another stage
 ```
+
+`vpr deploy` and `vpr keys` are shortcuts into one `ghdrop-admin` CLI
+(`vpr admin --help`), built with the same `effect/unstable/cli` as `ghdrop`. It
+reads the stack's state in process — no `alchemy` subprocess — to resolve the
+service URL and the admin token.
 
 ## Standalone binary
 
@@ -187,8 +192,6 @@ src/resources.ts   # R2 bucket + KV namespace definitions
 src/worker.ts      # Worker implementing the HttpApi (handlers, auth, bindings)
 src/cli.ts         # ghdrop CLI — user-facing only (derived HttpApiClient)
 src/config.ts      # ~/.config/ghdrop/config.json (url + apiKey only)
-scripts/deploy.ts  # `vpr deploy` — deploy the stack and set up this machine
-scripts/keys.ts    # `vpr keys` — mint/list/revoke, admin token from the stack
-scripts/stack.ts   # reads url + admin token back out of alchemy state
+scripts/admin.ts   # `vpr admin` — deploy + key management (maintainer CLI)
 skills/ghdrop/     # agent skill (usage docs for Claude Code / Codex)
 ```

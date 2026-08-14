@@ -9,14 +9,15 @@
     "ghdrop": "./src/cli.ts"
   },
   "scripts": {
-    "deploy": "node scripts/deploy.ts",
+    "admin": "node scripts/admin.ts",
+    "deploy": "node scripts/admin.ts deploy",
+    "keys": "node scripts/admin.ts keys",
     "dev": "alchemy dev --stage local",
     "destroy": "alchemy destroy",
     "cli": "node src/cli.ts",
     "build": "vp pack",
     "build:all": "GHDROP_TARGETS=all vp pack",
-    "typecheck": "tsc --noEmit",
-    "keys": "node scripts/keys.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-rc.109",

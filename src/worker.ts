@@ -1,12 +1,11 @@
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Config from "effect/Config";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
+import * as Redacted from "effect/Redacted";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Etag from "effect/unstable/http/Etag";
@@ -83,12 +82,20 @@ const sanitizeName = (name: string) => {
 export default Cloudflare.Worker(
   "Api",
   // The admin token lives in alchemy state; binding it here makes it a Worker
-  // secret, which `Config.redacted` below reads at runtime.
+  // secret, read back from the Worker environment at request time.
   { main: import.meta.url, env: { GHDROP_ADMIN_TOKEN: AdminToken } },
   Effect.gen(function* () {
     const files = yield* Cloudflare.R2.ReadWriteBucket(Files);
     const keys = yield* Cloudflare.KV.ReadWriteNamespace(ApiKeys);
-    const adminToken = yield* Config.redacted("GHDROP_ADMIN_TOKEN");
+    // Read the bound secret from the Worker's own environment rather than a
+    // deploy-time `Config` lookup: `Config` would demand the value from the
+    // ambient environment every time alchemy merely *loads* this program
+    // (plan, state reads), which is exactly what the Random resource exists to
+    // avoid. Bindings are only populated at exec phase, so read it lazily.
+    const workerEnv = yield* Cloudflare.WorkerEnvironment;
+    const adminToken = Effect.sync(
+      () => (workerEnv as Record<string, string>)["GHDROP_ADMIN_TOKEN"] ?? "",
+    );
     const selfUrl = yield* Cloudflare.Worker.URL;
     const cryptography = yield* Crypto.Crypto;
 
@@ -128,7 +135,7 @@ export default Cloudflare.Worker(
 
     const isAdminToken = Effect.fn(function* (token: string) {
       const provided = yield* sha256Hex(token);
-      const expected = yield* sha256Hex(Redacted.value(adminToken));
+      const expected = yield* sha256Hex(yield* adminToken);
       return provided === expected;
     });
 
