@@ -114,8 +114,13 @@ const commandExists = (bin: string) =>
 
 // ── reading the stack ────────────────────────────────────────────────────────
 
-/** Alchemy's default stage, matching `dev_${USER}`. */
-const defaultStage = () => `dev_${process.env.USER ?? "unknown"}`;
+/**
+ * This is one shared deployment, not a per-developer copy, so maintainer
+ * commands target `prod` unless told otherwise — alchemy's own default
+ * (`dev_$USER`) would give every machine its own service. Local work goes to
+ * the `local` stage via `pnpm dev`.
+ */
+const DEFAULT_STAGE = "prod";
 
 /**
  * Read resource attributes straight out of alchemy state, in process.
@@ -164,7 +169,7 @@ const readState = (stage: string, fqn: string) =>
 
 /** The deployed service URL and its admin token, straight from the stack. */
 const readDeployment = Effect.fn(function* (stage: Option.Option<string>) {
-  const target = Option.getOrElse(stage, defaultStage);
+  const target = Option.getOrElse(stage, () => DEFAULT_STAGE);
   const url = (yield* readState(target, "Api"))["url"];
   const secret = (yield* readState(target, "AdminToken"))["text"];
   // `Random` stores its value redacted, so unwrap rather than stringify.
@@ -329,8 +334,13 @@ const deploy = Command.make(
       });
     }
 
-    const args = ["alchemy", "deploy", "--yes"];
-    if (Option.isSome(stage)) args.push("--stage", stage.value);
+    const args = [
+      "alchemy",
+      "deploy",
+      "--yes",
+      "--stage",
+      Option.getOrElse(stage, () => DEFAULT_STAGE),
+    ];
     const { code, output } = yield* runCapture("pnpm", args);
     if (code !== 0) {
       return yield* new AdminError({

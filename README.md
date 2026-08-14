@@ -64,8 +64,9 @@ vpr keys list
 vpr keys revoke <keyId>
 ```
 
-Both are subcommands of one `ghdrop-admin` CLI: see `vpr admin --help`, plus
-`--stage <name>` to target another stage.
+Both are subcommands of one `ghdrop-admin` CLI: see `vpr admin --help`. They
+target the `prod` stage by default — this is one shared deployment, not a copy
+per developer — and `--stage <name>` targets another.
 
 ## Development
 
@@ -80,10 +81,11 @@ pnpm destroy
 `vp install` also wires a pre-commit hook (through the `prepare` script) that
 runs `vp check --fix` over staged files.
 
-> `pnpm dev` deliberately uses its own `local` alchemy stage. Sharing a stage
-> with a deployment makes the next deploy plan read `replace (local → live)`,
-> which recreates the KV namespace and R2 bucket — wiping API keys and uploaded
-> files. When in doubt, `pnpm alchemy deploy --dry-run` and read the plan.
+> `pnpm dev` deliberately uses its own `local` alchemy stage, separate from
+> `prod`. Sharing a stage between local runs and a deployment makes the next
+> deploy plan read `replace (local → live)`, which recreates the KV namespace
+> and R2 bucket — wiping API keys and uploaded files. When in doubt,
+> `pnpm alchemy deploy --dry-run` and read the plan.
 
 To cut a release: bump the version, `pnpm build:all`, then
 `gh release create vX.Y.Z build/ghdrop-*`.
