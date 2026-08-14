@@ -11,10 +11,8 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -27,11 +25,8 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as Os from "node:os";
 import { api } from "../src/api.ts";
-import {
-  configPath,
-  readStoredConfig,
-  writeStoredConfig,
-} from "../src/config.ts";
+import { configPath, readStoredConfig, writeStoredConfig } from "../src/config.ts";
+import { readDeployment } from "./stack.ts";
 
 class DeployError extends Data.TaggedError("DeployError")<{
   readonly message: string;
@@ -108,44 +103,6 @@ const commandExists = (bin: string) =>
     );
     return Number(code) === 0;
   }).pipe(Effect.orElseSucceed(() => false));
-
-/**
- * Find the admin token (env → .env → config file), or generate one and
- * persist it to .env so `alchemy deploy` picks it up on every future run.
- */
-const ensureAdminToken = Effect.gen(function* () {
-  const fromEnv = process.env.GHDROP_ADMIN_TOKEN;
-  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
-
-  const fs = yield* FileSystem.FileSystem;
-  const envText = yield* fs
-    .readFileString(".env")
-    .pipe(Effect.catchCause(() => Effect.succeed("")));
-  const fromDotenv = envText.match(/^GHDROP_ADMIN_TOKEN=(.+)$/m);
-  if (fromDotenv !== null) return fromDotenv[1]!.trim();
-
-  const stored = yield* readStoredConfig;
-  if (stored.adminToken !== undefined) return stored.adminToken;
-
-  const generate = yield* confirmOr(
-    true,
-    "No admin token found — generate one and save it to .env?",
-    true,
-  );
-  if (!generate) {
-    return yield* new DeployError({
-      message:
-        "deploy needs an admin token — set GHDROP_ADMIN_TOKEN or add it to .env",
-    });
-  }
-  const cryptography = yield* Crypto.Crypto;
-  const token = Encoding.encodeHex(yield* cryptography.randomBytes(32));
-  const updated =
-    envText.length === 0 || envText.endsWith("\n") ? envText : `${envText}\n`;
-  yield* fs.writeFileString(".env", `${updated}GHDROP_ADMIN_TOKEN=${token}\n`);
-  yield* Console.log("generated admin token and saved it to .env");
-  return token;
-});
 
 /** Where pnpm puts globally linked binaries. */
 const globalBinDir = Effect.gen(function* () {
@@ -239,14 +196,9 @@ const deploy = Effect.gen(function* () {
     });
   }
 
-  const adminToken = yield* ensureAdminToken;
-
   const args = ["alchemy", "deploy", "--yes"];
   if (stage !== undefined) args.push("--stage", stage);
-  const { code, output } = yield* runCapture("pnpm", args, {
-    ...process.env,
-    GHDROP_ADMIN_TOKEN: adminToken,
-  });
+  const { code, output } = yield* runCapture("pnpm", args);
   if (code !== 0) {
     return yield* new DeployError({
       message: `alchemy deploy exited with code ${code}`,
@@ -266,11 +218,11 @@ const deploy = Effect.gen(function* () {
 
   const save = yield* confirmOr(
     true,
-    `Save ${url} (and the admin token) to ${yield* configPath}?`,
+    `Save ${url} to ${yield* configPath}?`,
     true,
   );
   if (save) {
-    yield* writeStoredConfig({ url, adminToken });
+    yield* writeStoredConfig({ url });
     yield* Console.log(`saved ${yield* configPath}`);
   }
 
@@ -283,10 +235,12 @@ const deploy = Effect.gen(function* () {
     stored.apiKey === undefined,
   );
   if (mint) {
+    // The admin token never leaves the stack — read it back on demand.
+    const deployment = yield* readDeployment(stage);
     const client = yield* HttpApiClient.make(api, {
-      baseUrl: url,
+      baseUrl: deployment.url,
       transformClient: HttpClient.mapRequest(
-        HttpClientRequest.bearerToken(adminToken),
+        HttpClientRequest.bearerToken(deployment.adminToken),
       ),
     });
     const created = yield* client.keys

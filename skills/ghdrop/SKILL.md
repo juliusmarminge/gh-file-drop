@@ -90,7 +90,7 @@ gh issue comment 45 --body "$BODY"
   has not been set up. **Stop and tell the user**; setup is a one-time,
   credential-creating step documented in the gh-file-drop README (`vpr deploy`,
   or `ghdrop login <url> --api-key <key>` on an already-deployed service). Do
-  not attempt to deploy or mint keys on your own.
+  not attempt to deploy or mint keys on your own — the binary cannot anyway.
 - `HTTP 403: invalid API key` — the key was revoked; the user must mint a new
-  one (`ghdrop keys create --save`).
+  one from a checkout of the repo (`vpr keys create --save`).
 - `ghdrop --help` and `ghdrop upload --help` list the current flags.

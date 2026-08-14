@@ -22,15 +22,13 @@ vpr deploy         # = node scripts/deploy.ts
 
 The task handles everything:
 
-1. Finds the admin token (`$GHDROP_ADMIN_TOKEN` → `.env` → config file) — or
-   generates one and writes it to `.env` (gitignored; alchemy auto-loads it on
-   every future deploy).
-2. Runs `alchemy deploy --yes` (prompts for Cloudflare OAuth/API token on the
-   very first run; stored in `~/.alchemy/profiles.json`).
-3. Prompts to save the service URL + admin token to
-   `~/.config/ghdrop/config.json`.
-4. Prompts to mint an API key for this machine and saves it.
-5. Prompts to link `ghdrop` onto your PATH (`vp link -- --global`, or
+1. Runs `alchemy deploy --yes` (prompts for Cloudflare OAuth/API token on the
+   very first run; stored in `~/.alchemy/profiles.json`). The admin token is an
+   `Alchemy.Random` resource — generated once on first deploy, kept in alchemy
+   state, and bound to the Worker as a secret. There is no `.env` to manage.
+2. Prompts to save the service URL to `~/.config/ghdrop/config.json`.
+3. Prompts to mint an API key for this machine and saves it.
+4. Prompts to link `ghdrop` onto your PATH (`vp link -- --global`, or
    `pnpm link --global` without Vite+). If pnpm's global bin directory isn't on
    your PATH yet, it offers `pnpm setup` and otherwise prints the `export` line
    to add — you need a new shell before `ghdrop` resolves.
@@ -46,8 +44,8 @@ everything down.
 
 For other machines / CI, either copy credentials via
 `ghdrop login <url> --api-key <key>`, or skip the config file entirely with env
-vars: `GHDROP_URL`, `GHDROP_API_KEY`, `GHDROP_ADMIN_TOKEN` (flags win over env,
-env wins over the config file).
+vars: `GHDROP_URL` and `GHDROP_API_KEY` (flags win over env, env wins over the
+config file). The admin token is never one of these — it stays in the stack.
 
 To get `ghdrop` on your PATH from a checkout: `vp link -- --global` (the `bin`
 entry points at `src/cli.ts`, which Node runs natively). Elsewhere, use a
@@ -61,12 +59,18 @@ ghdrop upload -m before.png after.png    # Markdown, ready to paste into a PR
 ghdrop upload --json report.html         # machine-readable output
 ghdrop upload -n renamed.txt notes.txt   # override the stored filename
 ghdrop delete <url>                      # remove an upload
+```
 
-ghdrop keys create --label ci --save     # mint a key (admin)
-ghdrop keys list                         # keyId / created / label (admin)
-ghdrop keys revoke <keyId>               # revoke (admin)
+### Managing keys (maintainer, from a checkout)
 
-ghdrop deploy                            # (re)deploy + config/key prompts
+`ghdrop` itself never handles the admin token. Key management is a task that
+reads it out of alchemy state on demand:
+
+```sh
+vpr keys create --label ci [--save]      # mint a key (prints it once)
+vpr keys list                            # keyId / created / label
+vpr keys revoke <keyId>
+vpr keys create --stage prod             # another stage
 ```
 
 ## Standalone binary
@@ -145,9 +149,9 @@ ln -s ../../.agents/skills/ghdrop ~/.claude/skills/ghdrop
 ln -s ../../.agents/skills/ghdrop ~/.codex/skills/ghdrop
 ```
 
-Agents need the CLI on PATH — either `vp link -- --global` (which `ghdrop
-deploy` offers) or a standalone binary dropped somewhere on PATH — and a
-configured machine.
+Agents need the CLI on PATH — either `vp link -- --global` (which `vpr deploy`
+offers) or a standalone binary dropped somewhere on PATH — and a configured
+machine.
 
 ## API
 
@@ -169,8 +173,9 @@ Auth is two `HttpApiMiddleware` security schemes over `Authorization: Bearer
 <token>`: `Authorization` accepts any valid key, `AdminAuthorization` accepts
 only the admin token, and both resolve the token into a `Principal` that
 handlers read from context (uploads record it as `uploadedBy`). API keys are
-stored in KV as SHA-256 hashes; the admin token is a Worker secret and also
-works wherever an API key does. Max upload size is 100 MB (`413` past that).
+stored in KV as SHA-256 hashes; the admin token is an `Alchemy.Random` resource
+bound as a Worker secret, and also works wherever an API key does. Max upload
+size is 100 MB (`413` past that).
 
 ## Layout
 
@@ -181,7 +186,9 @@ src/api.ts         # HttpApi contract: endpoints, schemas, auth middleware
 src/resources.ts   # R2 bucket + KV namespace definitions
 src/worker.ts      # Worker implementing the HttpApi (handlers, auth, bindings)
 src/cli.ts         # ghdrop CLI — user-facing only (derived HttpApiClient)
-src/config.ts      # ~/.config/ghdrop/config.json, shared by CLI and deploy
+src/config.ts      # ~/.config/ghdrop/config.json (url + apiKey only)
 scripts/deploy.ts  # `vpr deploy` — deploy the stack and set up this machine
+scripts/keys.ts    # `vpr keys` — mint/list/revoke, admin token from the stack
+scripts/stack.ts   # reads url + admin token back out of alchemy state
 skills/ghdrop/     # agent skill (usage docs for Claude Code / Codex)
 ```

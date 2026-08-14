@@ -11,8 +11,8 @@
  * the service is maintainer tooling and lives in `scripts/deploy.ts`.
  *
  * Config resolution (first match wins):
- *   flags (--url / --api-key / --admin-token)
- *   env   (GHDROP_URL / GHDROP_API_KEY / GHDROP_ADMIN_TOKEN)
+ *   flags (--url / --api-key)
+ *   env   (GHDROP_URL / GHDROP_API_KEY)
  *   file  (~/.config/ghdrop/config.json — written by `ghdrop login`)
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -50,19 +50,13 @@ const ghdrop = Command.make("ghdrop").pipe(
       Flag.optional,
       Flag.withDescription("API key (default: $GHDROP_API_KEY, then config file)"),
     ),
-    adminToken: Flag.string("admin-token").pipe(
-      Flag.optional,
-      Flag.withDescription(
-        "Admin token (default: $GHDROP_ADMIN_TOKEN, then config file)",
-      ),
-    ),
   }),
   Command.withDescription(
     "Upload files to a public URL for sharing in GitHub PRs",
   ),
 );
 
-const resolveService = Effect.fn(function* (needs: "apiKey" | "adminToken") {
+const resolveService = Effect.gen(function* () {
   const root = yield* ghdrop;
   const stored = yield* readStoredConfig;
   const url =
@@ -73,29 +67,22 @@ const resolveService = Effect.fn(function* (needs: "apiKey" | "adminToken") {
         "no service URL configured — pass --url, set GHDROP_URL, or run `ghdrop login <url>`",
     });
   }
-  const apiKey =
+  const token =
     Option.getOrUndefined(root.apiKey) ??
     process.env.GHDROP_API_KEY ??
     stored.apiKey;
-  const adminToken =
-    Option.getOrUndefined(root.adminToken) ??
-    process.env.GHDROP_ADMIN_TOKEN ??
-    stored.adminToken;
-  const token = needs === "adminToken" ? adminToken : (apiKey ?? adminToken);
   if (token === undefined) {
     return yield* new CliError({
       message:
-        needs === "adminToken"
-          ? "no admin token configured — pass --admin-token or set GHDROP_ADMIN_TOKEN (the value the service was deployed with)"
-          : "no API key configured — pass --api-key, set GHDROP_API_KEY, or run `ghdrop login <url> --api-key <key>`",
+        "no API key configured — pass --api-key, set GHDROP_API_KEY, or run `ghdrop login <url> --api-key <key>`",
     });
   }
   return { url: url.replace(/\/+$/, ""), token };
 });
 
 /** A client derived from the shared HttpApi, authenticated as `token`. */
-const clientFor = Effect.fn(function* (needs: "apiKey" | "adminToken") {
-  const service = yield* resolveService(needs);
+const serviceClient = Effect.gen(function* () {
+  const service = yield* resolveService;
   return yield* HttpApiClient.make(api, {
     baseUrl: service.url,
     transformClient: HttpClient.mapRequest(
@@ -174,7 +161,7 @@ const upload = Command.make(
         message: "--name only works with a single file",
       });
     }
-    const client = yield* clientFor("apiKey");
+    const client = yield* serviceClient;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const results = [];
@@ -235,7 +222,7 @@ const del = Command.make(
     ),
   },
   Effect.fn(function* ({ target }) {
-    const client = yield* clientFor("apiKey");
+    const client = yield* serviceClient;
     const result = yield* asCliError(
       client.files.delete({ params: splitKey(target) }),
     );
@@ -259,14 +246,11 @@ const login = Command.make(
     const merged = yield* writeStoredConfig({
       url: serviceUrl.replace(/\/+$/, ""),
       ...(Option.isSome(root.apiKey) ? { apiKey: root.apiKey.value } : {}),
-      ...(Option.isSome(root.adminToken)
-        ? { adminToken: root.adminToken.value }
-        : {}),
     });
     yield* Console.log(`saved ${yield* configPath}`);
-    if (merged.apiKey === undefined && merged.adminToken === undefined) {
+    if (merged.apiKey === undefined) {
       yield* Console.log(
-        "no credentials stored yet — run `ghdrop keys create --save` (needs the admin token) or `ghdrop login <url> --api-key <key>`",
+        "no API key stored yet — pass --api-key, or ask whoever runs the service for one (`vpr keys create`)",
       );
     }
   }),
@@ -276,69 +260,10 @@ const login = Command.make(
   ),
 );
 
-// ── keys (admin) ─────────────────────────────────────────────────────────────
-
-const keysCreate = Command.make(
-  "create",
-  {
-    label: Flag.string("label").pipe(
-      Flag.withDefault("default"),
-      Flag.withDescription("Human-readable label for the key"),
-    ),
-    save: Flag.boolean("save").pipe(
-      Flag.withDescription("Also store the new key as this machine's API key"),
-    ),
-  },
-  Effect.fn(function* ({ label, save }) {
-    const client = yield* clientFor("adminToken");
-    const created = yield* asCliError(client.keys.create({ payload: { label } }));
-    if (save) {
-      yield* writeStoredConfig({ apiKey: created.apiKey });
-      yield* Console.log(`saved API key to ${yield* configPath}`);
-    }
-    yield* Console.log(`apiKey: ${created.apiKey}`);
-    yield* Console.log(`keyId:  ${created.keyId}`);
-  }),
-).pipe(Command.withDescription("Mint a new API key (shown once — save it)"));
-
-const keysList = Command.make(
-  "list",
-  {},
-  Effect.fn(function* () {
-    const client = yield* clientFor("adminToken");
-    const keys = yield* asCliError(client.keys.list({}));
-    if (keys.length === 0) {
-      return yield* Console.log("no API keys");
-    }
-    for (const key of keys) {
-      yield* Console.log(`${key.keyId}  ${key.createdAt}  ${key.label}`);
-    }
-  }),
-).pipe(Command.withDescription("List API keys"));
-
-const keysRevoke = Command.make(
-  "revoke",
-  {
-    keyId: Argument.string("key-id").pipe(
-      Argument.withDescription("Key id (from `ghdrop keys list`)"),
-    ),
-  },
-  Effect.fn(function* ({ keyId }) {
-    const client = yield* clientFor("adminToken");
-    const result = yield* asCliError(client.keys.revoke({ params: { keyId } }));
-    yield* Console.log(`revoked ${result.revoked}`);
-  }),
-).pipe(Command.withDescription("Revoke an API key"));
-
-const keys = Command.make("keys").pipe(
-  Command.withSubcommands([keysCreate, keysList, keysRevoke]),
-  Command.withDescription("Manage API keys (requires the admin token)"),
-);
-
 // ── run ──────────────────────────────────────────────────────────────────────
 
 ghdrop.pipe(
-  Command.withSubcommands([upload, del, login, keys]),
+  Command.withSubcommands([upload, del, login]),
   Command.run({ version: "0.1.1" }),
   Effect.catchTag("CliError", (error) =>
     Console.error(`error: ${error.message}`).pipe(

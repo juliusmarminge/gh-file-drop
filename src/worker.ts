@@ -24,7 +24,7 @@ import {
   MAX_UPLOAD_BYTES,
   Principal,
 } from "./api.ts";
-import { ApiKeys, Files } from "./resources.ts";
+import { AdminToken, ApiKeys, Files } from "./resources.ts";
 
 /** Workers expose WebCrypto as a global rather than an Effect service. */
 const CryptoLive = Layer.succeed(
@@ -82,7 +82,9 @@ const sanitizeName = (name: string) => {
 
 export default Cloudflare.Worker(
   "Api",
-  { main: import.meta.url },
+  // The admin token lives in alchemy state; binding it here makes it a Worker
+  // secret, which `Config.redacted` below reads at runtime.
+  { main: import.meta.url, env: { GHDROP_ADMIN_TOKEN: AdminToken } },
   Effect.gen(function* () {
     const files = yield* Cloudflare.R2.ReadWriteBucket(Files);
     const keys = yield* Cloudflare.KV.ReadWriteNamespace(ApiKeys);

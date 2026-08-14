@@ -15,7 +15,8 @@
     "cli": "node src/cli.ts",
     "build": "vp pack",
     "build:all": "GHDROP_TARGETS=all vp pack",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "keys": "node scripts/keys.ts"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-rc.109",

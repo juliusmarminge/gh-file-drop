@@ -10,10 +10,13 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Os from "node:os";
 
+/**
+ * Only ever holds user-facing credentials. The admin token stays in alchemy
+ * state and is never written here.
+ */
 export const StoredConfig = Schema.Struct({
   url: Schema.optional(Schema.String),
   apiKey: Schema.optional(Schema.String),
-  adminToken: Schema.optional(Schema.String),
 });
 export type StoredConfig = typeof StoredConfig.Type;
 
