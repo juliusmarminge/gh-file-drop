@@ -5,7 +5,7 @@
  * lowest-priority source (flags win, then env, then this).
  */
 
-import * as Os from "node:os";
+import * as NodeOS from "node:os";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -29,7 +29,7 @@ const encodeConfig = Schema.encodeEffect(StoredConfigJson);
 /** `$XDG_CONFIG_HOME/ghdrop/config.json`, falling back to `~/.config`. */
 export const configPath = Effect.gen(function* () {
   const path = yield* Path.Path;
-  const base = process.env.XDG_CONFIG_HOME ?? path.join(Os.homedir(), ".config");
+  const base = process.env.XDG_CONFIG_HOME ?? path.join(NodeOS.homedir(), ".config");
   return path.join(base, "ghdrop", "config.json");
 });
 

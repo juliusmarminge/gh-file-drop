@@ -15,7 +15,7 @@
  * stack state — never a `.env` file, never the user's config.
  */
 
-import * as Os from "node:os";
+import * as NodeOS from "node:os";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -234,8 +234,8 @@ const globalBinDir = Effect.gen(function* () {
   return (
     process.env.PNPM_HOME ??
     (process.platform === "darwin"
-      ? path.join(Os.homedir(), "Library", "pnpm")
-      : path.join(Os.homedir(), ".local", "share", "pnpm"))
+      ? path.join(NodeOS.homedir(), "Library", "pnpm")
+      : path.join(NodeOS.homedir(), ".local", "share", "pnpm"))
   );
 });
 
@@ -365,7 +365,7 @@ const deploy = Command.make(
       stored.apiKey === undefined,
     );
     if (mint) {
-      const created = yield* mintKey(stage, Os.hostname(), save);
+      const created = yield* mintKey(stage, NodeOS.hostname(), save);
       if (save) {
         yield* Console.log(`minted API key ${created.keyId} and saved it`);
       } else {
@@ -400,7 +400,7 @@ const keysCreate = Command.make(
     const { stage } = yield* admin;
     const created = yield* mintKey(
       stage,
-      Option.getOrElse(label, () => Os.hostname()),
+      Option.getOrElse(label, () => NodeOS.hostname()),
       save,
     );
     if (save) {
