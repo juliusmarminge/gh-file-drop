@@ -339,7 +339,7 @@ const keys = Command.make("keys").pipe(
 
 ghdrop.pipe(
   Command.withSubcommands([upload, del, login, keys]),
-  Command.run({ version: "0.1.0" }),
+  Command.run({ version: "0.1.1" }),
   Effect.catchTag("CliError", (error) =>
     Console.error(`error: ${error.message}`).pipe(
       Effect.andThen(Effect.sync(() => process.exit(1))),

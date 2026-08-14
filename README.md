@@ -36,9 +36,13 @@ The task handles everything:
    to add — you need a new shell before `ghdrop` resolves.
 
 `vpr deploy --stage prod` targets another stage, and `--yes` (or any non-TTY
-run) accepts the defaults. `pnpm alchemy dev` runs the whole stack locally
-(workerd + local R2/KV emulation) on `http://localhost:1337`; `pnpm alchemy
-destroy` tears everything down.
+run) accepts the defaults. `pnpm dev` runs the whole stack locally (workerd +
+local R2/KV emulation) on `http://localhost:1337`; `pnpm alchemy destroy` tears
+everything down.
+
+> `pnpm dev` deliberately runs on its own `local` stage. Sharing a stage with a
+> deployment makes the next `deploy` plan read `replace (local → live)`, which
+> recreates the KV namespace and R2 bucket — wiping API keys and uploaded files.
 
 For other machines / CI, either copy credentials via
 `ghdrop login <url> --api-key <key>`, or skip the config file entirely with env

@@ -1,6 +1,6 @@
 {
   "name": "gh-file-drop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Upload files to a public URL for sharing in GitHub PRs (Cloudflare Worker + R2)",
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "deploy": "node scripts/deploy.ts",
-    "dev": "alchemy dev",
+    "dev": "alchemy dev --stage local",
     "destroy": "alchemy destroy",
     "cli": "node src/cli.ts",
     "build": "vp pack",
