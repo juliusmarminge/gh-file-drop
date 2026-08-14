@@ -31,14 +31,14 @@ ghdrop upload screenshot.png
 
 One URL per line on stdout, in argument order — safe to capture in a variable.
 
-| Command | Result |
-| --- | --- |
-| `ghdrop upload <file>` | Upload, print the public URL |
-| `ghdrop upload <a> <b> ...` | Upload several, one URL per line |
-| `ghdrop upload -m <files...>` | Print Markdown: `![name](url)` for images, `[name](url)` otherwise |
-| `ghdrop upload --json <files...>` | `[{"url","key","name","size","contentType"}]` — use when parsing |
-| `ghdrop upload -n <name> <file>` | Override the stored filename (single file) |
-| `ghdrop delete <url>` | Remove a previously uploaded file |
+| Command                           | Result                                                             |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `ghdrop upload <file>`            | Upload, print the public URL                                       |
+| `ghdrop upload <a> <b> ...`       | Upload several, one URL per line                                   |
+| `ghdrop upload -m <files...>`     | Print Markdown: `![name](url)` for images, `[name](url)` otherwise |
+| `ghdrop upload --json <files...>` | `[{"url","key","name","size","contentType"}]` — use when parsing   |
+| `ghdrop upload -n <name> <file>`  | Override the stored filename (single file)                         |
+| `ghdrop delete <url>`             | Remove a previously uploaded file                                  |
 
 Add `--url` / `--api-key` only if the ambient config is not being used.
 

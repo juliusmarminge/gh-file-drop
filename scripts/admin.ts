@@ -14,12 +14,15 @@
  * the admin token is an `Alchemy.Random` resource read straight back out of
  * stack state — never a `.env` file, never the user's config.
  */
+
+import * as Os from "node:os";
+
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AlchemyContextLive } from "alchemy/AlchemyContext";
 import { AuthProviders } from "alchemy/Auth/AuthProvider";
 import { Stage } from "alchemy/Stage";
 import * as State from "alchemy/State";
-import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -39,7 +42,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import * as Os from "node:os";
+
 import Stack from "../alchemy.run.ts";
 import { api } from "../src/api.ts";
 import { configPath, readStoredConfig, writeStoredConfig } from "../src/config.ts";
@@ -75,10 +78,7 @@ const runCapture = (
 
     const decoder = new TextDecoder();
     let output = "";
-    const pump = (
-      stream: Stream.Stream<Uint8Array, unknown>,
-      to?: NodeJS.WriteStream,
-    ) =>
+    const pump = (stream: Stream.Stream<Uint8Array, unknown>, to?: NodeJS.WriteStream) =>
       Stream.runForEach(stream, (chunk) =>
         Effect.sync(() => {
           output += decoder.decode(chunk, { stream: true });
@@ -89,10 +89,7 @@ const runCapture = (
     yield* Effect.all(
       options?.quiet === true
         ? [pump(handle.stdout)]
-        : [
-            pump(handle.stdout, process.stdout),
-            pump(handle.stderr, process.stderr),
-          ],
+        : [pump(handle.stdout, process.stdout), pump(handle.stderr, process.stderr)],
       { concurrency: "unbounded" },
     );
     return { code: Number(yield* handle.exitCode), output };
@@ -100,7 +97,9 @@ const runCapture = (
     Effect.scoped,
     Effect.mapError(
       (error) =>
-        new AdminError({ message: `failed to run ${command}: ${error}` }),
+        new AdminError({
+          message: `failed to run ${command}: ${String(error)}`,
+        }),
     ),
   );
 
@@ -134,12 +133,15 @@ const readState = (stage: string, fqn: string) =>
       return yield* state.get({ stack: STACK_NAME, stage, fqn });
     }).pipe(Effect.provide(stack.services));
 
-    if (persisted === undefined) {
+    // `PersistedState` also covers actions and in-flight creates, which carry
+    // no attributes yet.
+    if (persisted === undefined || !("attr" in persisted) || persisted.attr === undefined) {
       return yield* new AdminError({
         message: `no ${fqn} in stage ${stage} — has it been deployed?`,
       });
     }
-    return persisted.attr as Record<string, unknown>;
+    const attr: Record<string, unknown> = persisted.attr;
+    return attr;
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -153,7 +155,9 @@ const readState = (stage: string, fqn: string) =>
     Effect.scoped,
     Effect.catchTag("StateStoreError", (error) =>
       Effect.fail(
-        new AdminError({ message: `could not read stack state: ${error}` }),
+        new AdminError({
+          message: `could not read stack state: ${String(error)}`,
+        }),
       ),
     ),
   );
@@ -162,13 +166,15 @@ const readState = (stage: string, fqn: string) =>
 const readDeployment = Effect.fn(function* (stage: Option.Option<string>) {
   const target = Option.getOrElse(stage, defaultStage);
   const url = (yield* readState(target, "Api"))["url"];
-  const text = (yield* readState(target, "AdminToken"))["text"];
-  if (typeof url !== "string" || !Redacted.isRedacted(text)) {
+  const secret = (yield* readState(target, "AdminToken"))["text"];
+  // `Random` stores its value redacted, so unwrap rather than stringify.
+  const adminToken = Redacted.isRedacted(secret) ? Redacted.value(secret) : secret;
+  if (typeof url !== "string" || typeof adminToken !== "string") {
     return yield* new AdminError({
       message: "unexpected shape for the stack state",
     });
   }
-  return { url: url.replace(/\/+$/, ""), adminToken: Redacted.value(text) };
+  return { url: url.replace(/\/+$/, ""), adminToken };
 });
 
 // ── root command ─────────────────────────────────────────────────────────────
@@ -188,25 +194,20 @@ const adminClient = Effect.fn(function* (stage: Option.Option<string>) {
   const deployment = yield* readDeployment(stage);
   const client = yield* HttpApiClient.make(api, {
     baseUrl: deployment.url,
-    transformClient: HttpClient.mapRequest(
-      HttpClientRequest.bearerToken(deployment.adminToken),
-    ),
+    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(deployment.adminToken)),
   });
   return { client, url: deployment.url };
 });
 
-const mintKey = Effect.fn(function* (
-  stage: Option.Option<string>,
-  label: string,
-  save: boolean,
-) {
+const mintKey = Effect.fn(function* (stage: Option.Option<string>, label: string, save: boolean) {
   const { client, url } = yield* adminClient(stage);
-  const created = yield* client.keys.create({ payload: { label } }).pipe(
-    Effect.mapError(
-      (error) =>
-        new AdminError({ message: `could not mint an API key: ${error._tag}` }),
-    ),
-  );
+  const created = yield* client.keys
+    .create({ payload: { label } })
+    .pipe(
+      Effect.mapError(
+        (error) => new AdminError({ message: `could not mint an API key: ${error._tag}` }),
+      ),
+    );
   if (save) {
     yield* writeStoredConfig({ url, apiKey: created.apiKey });
   }
@@ -241,8 +242,7 @@ const globalBinDir = Effect.gen(function* () {
 /** `Path` models file separators, not the PATH variable's own delimiter. */
 const pathDelimiter = process.platform === "win32" ? ";" : ":";
 
-const onPath = (dir: string) =>
-  (process.env.PATH ?? "").split(pathDelimiter).includes(dir);
+const onPath = (dir: string) => (process.env.PATH ?? "").split(pathDelimiter).includes(dir);
 
 /**
  * Put `ghdrop` on PATH from this checkout — the difference between the service
@@ -274,9 +274,7 @@ const linkGlobally = Effect.fn(function* (interactive: boolean) {
   // to make the directory permanent, not to make this link work.
   const dir = yield* globalBinDir;
   const fs = yield* FileSystem.FileSystem;
-  yield* fs
-    .makeDirectory(dir, { recursive: true })
-    .pipe(Effect.catchCause(() => Effect.void));
+  yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.catchCause(() => Effect.void));
 
   const { code } = yield* runCapture(command, args, {
     env: {
@@ -325,11 +323,7 @@ const deploy = Command.make(
     const interactive = process.stdin.isTTY === true && !yes;
 
     const fs = yield* FileSystem.FileSystem;
-    if (
-      !(yield* fs
-        .exists("alchemy.run.ts")
-        .pipe(Effect.orElseSucceed(() => false)))
-    ) {
+    if (!(yield* fs.exists("alchemy.run.ts").pipe(Effect.orElseSucceed(() => false)))) {
       return yield* new AdminError({
         message: "run this from the root of the gh-file-drop repo",
       });
@@ -355,12 +349,7 @@ const deploy = Command.make(
     }
     const url = urlMatch[1]!.replace(/\/+$/, "");
 
-    const save = yield* confirmOr(
-      interactive,
-      true,
-      `Save ${url} to ${yield* configPath}?`,
-      true,
-    );
+    const save = yield* confirmOr(interactive, true, `Save ${url} to ${yield* configPath}?`, true);
     if (save) {
       yield* writeStoredConfig({ url });
       yield* Console.log(`saved ${yield* configPath}`);
@@ -392,11 +381,7 @@ const deploy = Command.make(
         : "\nready — try: node src/cli.ts upload <file>",
     );
   }),
-).pipe(
-  Command.withDescription(
-    "Deploy the stack and set this machine up to talk to it",
-  ),
-);
+).pipe(Command.withDescription("Deploy the stack and set this machine up to talk to it"));
 
 // ── keys ─────────────────────────────────────────────────────────────────────
 
@@ -451,9 +436,7 @@ const keysList = Command.make(
 const keysRevoke = Command.make(
   "revoke",
   {
-    keyId: Argument.string("key-id").pipe(
-      Argument.withDescription("Key id (from `keys list`)"),
-    ),
+    keyId: Argument.string("key-id").pipe(Argument.withDescription("Key id (from `keys list`)")),
   },
   Effect.fn(function* ({ keyId }) {
     const { stage } = yield* admin;
@@ -462,8 +445,7 @@ const keysRevoke = Command.make(
       .revoke({ params: { keyId } })
       .pipe(
         Effect.mapError(
-          (error) =>
-            new AdminError({ message: `could not revoke ${keyId}: ${error._tag}` }),
+          (error) => new AdminError({ message: `could not revoke ${keyId}: ${error._tag}` }),
         ),
       );
     yield* Console.log(`revoked ${result.revoked}`);

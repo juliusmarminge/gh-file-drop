@@ -4,11 +4,13 @@
  * Written by `ghdrop login` / `vpr deploy`, read by every command as the
  * lowest-priority source (flags win, then env, then this).
  */
+
+import * as Os from "node:os";
+
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Os from "node:os";
 
 /**
  * Only ever holds user-facing credentials. The admin token stays in alchemy
@@ -27,8 +29,7 @@ const encodeConfig = Schema.encodeEffect(StoredConfigJson);
 /** `$XDG_CONFIG_HOME/ghdrop/config.json`, falling back to `~/.config`. */
 export const configPath = Effect.gen(function* () {
   const path = yield* Path.Path;
-  const base =
-    process.env.XDG_CONFIG_HOME ?? path.join(Os.homedir(), ".config");
+  const base = process.env.XDG_CONFIG_HOME ?? path.join(Os.homedir(), ".config");
   return path.join(base, "ghdrop", "config.json");
 });
 

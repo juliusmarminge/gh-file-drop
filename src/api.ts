@@ -78,10 +78,9 @@ export const NewApiKey = Schema.Struct({
 });
 export type NewApiKey = typeof NewApiKey.Type;
 
-export class FileTooLarge extends Schema.TaggedError<FileTooLarge>()(
-  "FileTooLarge",
-  { maxBytes: Schema.Number },
-) {}
+export class FileTooLarge extends Schema.TaggedError<FileTooLarge>()("FileTooLarge", {
+  maxBytes: Schema.Number,
+}) {}
 
 /** 413 rather than the default error status. */
 const FileTooLargeError = FileTooLarge.pipe(HttpApiSchema.status(413));
@@ -130,11 +129,7 @@ const index = HttpApiEndpoint.get("index", "/", {
 
 // ── groups & api ─────────────────────────────────────────────────────────────
 
-export const FilesGroup = HttpApiGroup.make("files").add(
-  upload,
-  download,
-  remove,
-);
+export const FilesGroup = HttpApiGroup.make("files").add(upload, download, remove);
 
 export const KeysGroup = HttpApiGroup.make("keys")
   .add(createKey, listKeys, revokeKey)

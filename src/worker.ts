@@ -2,10 +2,10 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
-import * as Redacted from "effect/Redacted";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Etag from "effect/unstable/http/Etag";
@@ -14,6 +14,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+
 import {
   AdminAuthorization,
   api,
@@ -31,9 +32,9 @@ const CryptoLive = Layer.succeed(
   Crypto.make({
     randomBytes: (size) => crypto.getRandomValues(new Uint8Array(size)),
     digest: (algorithm, data) =>
-      Effect.promise(() =>
-        crypto.subtle.digest(algorithm, new Uint8Array(data)),
-      ).pipe(Effect.map((buffer) => new Uint8Array(buffer))),
+      Effect.promise(() => crypto.subtle.digest(algorithm, new Uint8Array(data))).pipe(
+        Effect.map((buffer) => new Uint8Array(buffer)),
+      ),
   }),
 );
 
@@ -67,8 +68,7 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 const contentTypeFor = (name: string) =>
-  CONTENT_TYPES[name.split(".").pop()?.toLowerCase() ?? ""] ??
-  "application/octet-stream";
+  CONTENT_TYPES[name.split(".").pop()?.toLowerCase() ?? ""] ?? "application/octet-stream";
 
 const sanitizeName = (name: string) => {
   const base = name.split(/[/\\]/).pop() ?? "";
@@ -106,9 +106,7 @@ export default Cloudflare.Worker(
         .digest("SHA-256", encoder.encode(input))
         .pipe(Effect.map(Encoding.encodeHex), Effect.orDie);
     const randomHex = (bytes: number) =>
-      cryptography
-        .randomBytes(bytes)
-        .pipe(Effect.map(Encoding.encodeHex), Effect.orDie);
+      cryptography.randomBytes(bytes).pipe(Effect.map(Encoding.encodeHex), Effect.orDie);
 
     // Storage failures are infrastructure defects, not part of the API
     // contract — they surface as 500s rather than typed errors.
@@ -126,11 +124,9 @@ export default Cloudflare.Worker(
     };
     const kv = {
       get: (key: string) => keys.get(key).pipe(Effect.orDie),
-      put: (...args: Parameters<typeof keys.put>) =>
-        keys.put(...args).pipe(Effect.orDie),
+      put: (...args: Parameters<typeof keys.put>) => keys.put(...args).pipe(Effect.orDie),
       delete: (key: string) => keys.delete(key).pipe(Effect.orDie),
-      list: <M>(options: { prefix: string }) =>
-        keys.list<M>(options).pipe(Effect.orDie),
+      list: <M>(options: { prefix: string }) => keys.list<M>(options).pipe(Effect.orDie),
     };
 
     const isAdminToken = Effect.fn(function* (token: string) {
@@ -145,9 +141,7 @@ export default Cloudflare.Worker(
       admin: true,
     };
 
-    const resolvePrincipalIn = Effect.fn(function* (
-      credential: Redacted.Redacted,
-    ) {
+    const resolvePrincipalIn = Effect.fn(function* (credential: Redacted.Redacted) {
       const token = Redacted.value(credential).trim();
       if (token.length === 0) {
         return yield* new HttpApiError.Unauthorized();
@@ -181,9 +175,7 @@ export default Cloudflare.Worker(
     const AuthorizationLive = Layer.succeed(Authorization, {
       bearer: (httpEffect, { credential }) =>
         resolvePrincipal(credential).pipe(
-          Effect.flatMap((principal) =>
-            Effect.provideService(httpEffect, Principal, principal),
-          ),
+          Effect.flatMap((principal) => Effect.provideService(httpEffect, Principal, principal)),
         ),
     });
 
@@ -239,8 +231,7 @@ export default Cloudflare.Worker(
               return yield* new HttpApiError.NotFound();
             }
             return HttpServerResponse.stream(object.body, {
-              contentType:
-                object.httpMetadata?.contentType ?? "application/octet-stream",
+              contentType: object.httpMetadata?.contentType ?? "application/octet-stream",
               headers: {
                 "cache-control": "public, max-age=31536000, immutable",
                 etag: object.httpEtag,
@@ -276,11 +267,9 @@ export default Cloudflare.Worker(
             const keyId = hash.slice(0, 12);
             const createdAt = new Date().toISOString();
             const meta = { keyId, label, createdAt };
-            yield* kv.put(
-              `key:${hash}`,
-              yield* encodeApiKeyRecord(meta).pipe(Effect.orDie),
-              { metadata: meta },
-            );
+            yield* kv.put(`key:${hash}`, yield* encodeApiKeyRecord(meta).pipe(Effect.orDie), {
+              metadata: meta,
+            });
             yield* kv.put(`keyid:${keyId}`, hash);
             return { apiKey, ...meta };
           }),
@@ -345,10 +334,7 @@ export default Cloudflare.Worker(
         Layer.provide([FilesLive, KeysLive, MetaLive]),
         Layer.provide([AuthorizationLive, AdminAuthorizationLive]),
       ),
-    ).pipe(
-      Effect.provide(PlatformLive),
-      Effect.provideService(Scope.Scope, scope),
-    );
+    ).pipe(Effect.provide(PlatformLive), Effect.provideService(Scope.Scope, scope));
 
     return { fetch };
   }).pipe(

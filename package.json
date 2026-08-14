@@ -2,12 +2,11 @@
   "name": "gh-file-drop",
   "version": "0.1.1",
   "private": true,
-  "type": "module",
   "description": "Upload files to a public URL for sharing in GitHub PRs (Cloudflare Worker + R2)",
-  "packageManager": "pnpm@10.15.0",
   "bin": {
     "ghdrop": "./src/cli.ts"
   },
+  "type": "module",
   "scripts": {
     "admin": "node scripts/admin.ts",
     "deploy": "node scripts/admin.ts deploy",
@@ -17,6 +16,9 @@
     "cli": "node src/cli.ts",
     "build": "vp pack",
     "build:all": "GHDROP_TARGETS=all vp pack",
+    "check": "vp check",
+    "fmt": "vp fmt",
+    "lint": "vp lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -30,18 +32,19 @@
     "typescript": "^7.0.2",
     "vite-plus": "^0.2.9"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "workerd",
-      "msgpackr-extract",
-      "sharp"
-    ]
-  },
   "devEngines": {
     "runtime": {
       "name": "node",
       "version": "26.7.0",
       "onFail": "download"
     }
+  },
+  "packageManager": "pnpm@10.15.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "workerd",
+      "msgpackr-extract",
+      "sharp"
+    ]
   }
 }

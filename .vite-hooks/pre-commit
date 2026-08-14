@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Format, lint and type-check whatever is staged (see `staged` in
+# vite.config.ts). Set VP_GIT_HOOKS=0 to skip.
+vp staged

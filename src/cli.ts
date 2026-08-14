@@ -31,6 +31,7 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+
 import { api, FileInfo } from "./api.ts";
 import { configPath, readStoredConfig, writeStoredConfig } from "./config.ts";
 
@@ -51,26 +52,20 @@ const ghdrop = Command.make("ghdrop").pipe(
       Flag.withDescription("API key (default: $GHDROP_API_KEY, then config file)"),
     ),
   }),
-  Command.withDescription(
-    "Upload files to a public URL for sharing in GitHub PRs",
-  ),
+  Command.withDescription("Upload files to a public URL for sharing in GitHub PRs"),
 );
 
 const resolveService = Effect.gen(function* () {
   const root = yield* ghdrop;
   const stored = yield* readStoredConfig;
-  const url =
-    Option.getOrUndefined(root.url) ?? process.env.GHDROP_URL ?? stored.url;
+  const url = Option.getOrUndefined(root.url) ?? process.env.GHDROP_URL ?? stored.url;
   if (url === undefined) {
     return yield* new CliError({
       message:
         "no service URL configured — pass --url, set GHDROP_URL, or run `ghdrop login <url>`",
     });
   }
-  const token =
-    Option.getOrUndefined(root.apiKey) ??
-    process.env.GHDROP_API_KEY ??
-    stored.apiKey;
+  const token = Option.getOrUndefined(root.apiKey) ?? process.env.GHDROP_API_KEY ?? stored.apiKey;
   if (token === undefined) {
     return yield* new CliError({
       message:
@@ -85,9 +80,7 @@ const serviceClient = Effect.gen(function* () {
   const service = yield* resolveService;
   return yield* HttpApiClient.make(api, {
     baseUrl: service.url,
-    transformClient: HttpClient.mapRequest(
-      HttpClientRequest.bearerToken(service.token),
-    ),
+    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(service.token)),
   });
 });
 
@@ -106,18 +99,15 @@ const explain = (error: { readonly _tag: string } & Record<string, unknown>) => 
       return `file too large (max ${Math.round(Number(error.maxBytes) / 1024 / 1024)} MB)`;
     case "SchemaError":
       return "the server returned an unexpected response shape";
-    default:
-      return String((error as { message?: unknown }).message ?? error._tag);
+    default: {
+      const message = (error as { message?: unknown }).message;
+      return typeof message === "string" ? message : error._tag;
+    }
   }
 };
 
-const asCliError = <A, E extends { readonly _tag: string }, R>(
-  effect: Effect.Effect<A, E, R>,
-) =>
-  Effect.mapError(
-    effect,
-    (error) => new CliError({ message: explain(error as never) }),
-  );
+const asCliError = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.mapError(effect, (error) => new CliError({ message: explain(error as never) }));
 
 /** `--json` output, encoded through the same schema the server answers with. */
 const encodeResults = Schema.encodeEffect(
@@ -151,9 +141,7 @@ const upload = Command.make(
       Flag.withAlias("m"),
       Flag.withDescription("Print Markdown ready to paste into a PR comment"),
     ),
-    json: Flag.boolean("json").pipe(
-      Flag.withDescription("Print results as JSON"),
-    ),
+    json: Flag.boolean("json").pipe(Flag.withDescription("Print results as JSON")),
   },
   Effect.fn(function* ({ files, json, markdown, name }) {
     if (Option.isSome(name) && files.length > 1) {
@@ -169,15 +157,11 @@ const upload = Command.make(
       const payload = yield* fs
         .readFile(file)
         .pipe(
-          Effect.mapError(
-            (e) => new CliError({ message: `cannot read ${file}: ${e.message}` }),
-          ),
+          Effect.mapError((e) => new CliError({ message: `cannot read ${file}: ${e.message}` })),
         );
       const uploadName = Option.getOrElse(name, () => path.basename(file));
       results.push(
-        yield* asCliError(
-          client.files.upload({ query: { name: uploadName }, payload }),
-        ),
+        yield* asCliError(client.files.upload({ query: { name: uploadName }, payload })),
       );
     }
     if (json) {
@@ -196,9 +180,7 @@ const upload = Command.make(
     }
   }),
 ).pipe(
-  Command.withDescription(
-    "Upload one or more files; prints one public URL per line",
-  ),
+  Command.withDescription("Upload one or more files; prints one public URL per line"),
   Command.withAlias("up"),
   Command.withExamples([
     {
@@ -223,9 +205,7 @@ const del = Command.make(
   },
   Effect.fn(function* ({ target }) {
     const client = yield* serviceClient;
-    const result = yield* asCliError(
-      client.files.delete({ params: splitKey(target) }),
-    );
+    const result = yield* asCliError(client.files.delete({ params: splitKey(target) }));
     yield* Console.log(`deleted ${result.deleted}`);
   }),
 ).pipe(Command.withDescription("Delete an uploaded file"));
@@ -236,9 +216,7 @@ const login = Command.make(
   "login",
   {
     serviceUrl: Argument.string("url").pipe(
-      Argument.withDescription(
-        "Service URL, e.g. https://gh-file-drop-api.<account>.workers.dev",
-      ),
+      Argument.withDescription("Service URL, e.g. https://gh-file-drop-api.<account>.workers.dev"),
     ),
   },
   Effect.fn(function* ({ serviceUrl }) {
@@ -254,11 +232,7 @@ const login = Command.make(
       );
     }
   }),
-).pipe(
-  Command.withDescription(
-    "Store the service URL and credentials in the config file",
-  ),
-);
+).pipe(Command.withDescription("Store the service URL and credentials in the config file"));
 
 // ── run ──────────────────────────────────────────────────────────────────────
 

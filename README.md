@@ -92,7 +92,7 @@ GHDROP_TARGETS=linux-x64 pnpm build
 Targets are `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`, `win-x64`;
 cross-compiling downloads and caches the matching Node runtime. Build settings
 live in `vite.config.ts` — note that passing `--exe` on the command line would
-*override* that config, so the scripts deliberately don't.
+_override_ that config, so the scripts deliberately don't.
 
 Each binary is ~145 MB (~42 MB gzipped) because it embeds Node. The binary
 contains only the user-facing commands — deploying stays in `vpr deploy`, which
@@ -165,14 +165,14 @@ implements it with `HttpApiBuilder`; the CLI derives its client from the same
 value with `HttpApiClient`, so a contract change is a compile error on both
 sides. The service serves its own OpenAPI document at `/openapi.json`.
 
-| Route | Auth | Purpose |
-| --- | --- | --- |
-| `POST /files?name=<filename>` | API key | Upload raw body, returns `{url, key, name, size, contentType}` |
-| `GET /f/<id>/<name>` | public | Download (immutable cache, correct content-type) |
-| `DELETE /f/<id>/<name>` | API key | Delete an upload |
-| `POST /keys` | admin token | Mint an API key, returns `{apiKey, keyId, ...}` |
-| `GET /keys` | admin token | List keys |
-| `DELETE /keys/<keyId>` | admin token | Revoke a key |
+| Route                         | Auth        | Purpose                                                        |
+| ----------------------------- | ----------- | -------------------------------------------------------------- |
+| `POST /files?name=<filename>` | API key     | Upload raw body, returns `{url, key, name, size, contentType}` |
+| `GET /f/<id>/<name>`          | public      | Download (immutable cache, correct content-type)               |
+| `DELETE /f/<id>/<name>`       | API key     | Delete an upload                                               |
+| `POST /keys`                  | admin token | Mint an API key, returns `{apiKey, keyId, ...}`                |
+| `GET /keys`                   | admin token | List keys                                                      |
+| `DELETE /keys/<keyId>`        | admin token | Revoke a key                                                   |
 
 Auth is two `HttpApiMiddleware` security schemes over `Authorization: Bearer
 <token>`: `Authorization` accepts any valid key, `AdminAuthorization` accepts
