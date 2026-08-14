@@ -1,26 +1,48 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 import {
   AdminAuthorization,
   api,
+  ApiKeyInfo,
   Authorization,
   FileTooLarge,
   MAX_UPLOAD_BYTES,
   Principal,
-  type PrincipalShape,
 } from "./api.ts";
 import { ApiKeys, Files } from "./resources.ts";
+
+/** Workers expose WebCrypto as a global rather than an Effect service. */
+const CryptoLive = Layer.succeed(
+  Crypto.Crypto,
+  Crypto.make({
+    randomBytes: (size) => crypto.getRandomValues(new Uint8Array(size)),
+    digest: (algorithm, data) =>
+      Effect.promise(() =>
+        crypto.subtle.digest(algorithm, new Uint8Array(data)),
+      ).pipe(Effect.map((buffer) => new Uint8Array(buffer))),
+  }),
+);
+
+/** How an API key is stored in KV: hashed key → this record. */
+const ApiKeyRecord = Schema.fromJsonString(ApiKeyInfo);
+const decodeApiKeyRecord = Schema.decodeEffect(ApiKeyRecord);
+const encodeApiKeyRecord = Schema.encodeEffect(ApiKeyRecord);
+const decodeApiKeyMetadata = Schema.decodeUnknownEffect(ApiKeyInfo);
 
 const FILE_KEY_PATTERN = /^[0-9a-f]{16}\/[A-Za-z0-9._-]+$/;
 
@@ -58,24 +80,6 @@ const sanitizeName = (name: string) => {
   return safe.length > 0 ? safe : "file.bin";
 };
 
-const sha256Hex = (input: string) =>
-  Effect.promise(async () => {
-    const digest = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(input),
-    );
-    return Array.from(new Uint8Array(digest), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join("");
-  });
-
-const randomHex = (bytes: number) =>
-  Effect.sync(() =>
-    Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join(""),
-  );
-
 export default Cloudflare.Worker(
   "Api",
   { main: import.meta.url },
@@ -84,6 +88,18 @@ export default Cloudflare.Worker(
     const keys = yield* Cloudflare.KV.ReadWriteNamespace(ApiKeys);
     const adminToken = yield* Config.redacted("GHDROP_ADMIN_TOKEN");
     const selfUrl = yield* Cloudflare.Worker.URL;
+    const cryptography = yield* Crypto.Crypto;
+
+    const encoder = new TextEncoder();
+    // Hashing and RNG can't fail in any way the API contract models.
+    const sha256Hex = (input: string) =>
+      cryptography
+        .digest("SHA-256", encoder.encode(input))
+        .pipe(Effect.map(Encoding.encodeHex), Effect.orDie);
+    const randomHex = (bytes: number) =>
+      cryptography
+        .randomBytes(bytes)
+        .pipe(Effect.map(Encoding.encodeHex), Effect.orDie);
 
     // Storage failures are infrastructure defects, not part of the API
     // contract — they surface as 500s rather than typed errors.
@@ -114,7 +130,7 @@ export default Cloudflare.Worker(
       return provided === expected;
     });
 
-    const ADMIN: PrincipalShape = {
+    const ADMIN: Principal["Service"] = {
       keyId: "admin",
       label: "admin token",
       admin: true,
@@ -133,7 +149,7 @@ export default Cloudflare.Worker(
       if (record === null) {
         return yield* new HttpApiError.Unauthorized();
       }
-      const meta = JSON.parse(record) as { keyId: string; label: string };
+      const meta = yield* decodeApiKeyRecord(record).pipe(Effect.orDie);
       return { keyId: meta.keyId, label: meta.label, admin: false };
     });
 
@@ -147,9 +163,9 @@ export default Cloudflare.Worker(
      */
     const resolvePrincipal = (
       credential: Redacted.Redacted,
-    ): Effect.Effect<PrincipalShape, HttpApiError.Unauthorized> =>
+    ): Effect.Effect<Principal["Service"], HttpApiError.Unauthorized> =>
       resolvePrincipalIn(credential) as Effect.Effect<
-        PrincipalShape,
+        Principal["Service"],
         HttpApiError.Unauthorized
       >;
 
@@ -251,9 +267,11 @@ export default Cloudflare.Worker(
             const keyId = hash.slice(0, 12);
             const createdAt = new Date().toISOString();
             const meta = { keyId, label, createdAt };
-            yield* kv.put(`key:${hash}`, JSON.stringify(meta), {
-              metadata: meta,
-            });
+            yield* kv.put(
+              `key:${hash}`,
+              yield* encodeApiKeyRecord(meta).pipe(Effect.orDie),
+              { metadata: meta },
+            );
             yield* kv.put(`keyid:${keyId}`, hash);
             return { apiKey, ...meta };
           }),
@@ -261,15 +279,12 @@ export default Cloudflare.Worker(
         .handle(
           "list",
           Effect.fn(function* () {
-            const listing = yield* kv.list<{
-              keyId: string;
-              label: string;
-              createdAt: string;
-            }>({ prefix: "key:" });
-            return listing.keys.flatMap((k: { metadata?: unknown }) =>
-              k.metadata == null
-                ? []
-                : [k.metadata as { keyId: string; label: string; createdAt: string }],
+            const listing = yield* kv.list({ prefix: "key:" });
+            return yield* Effect.forEach(
+              listing.keys.flatMap((key: { metadata?: unknown }) =>
+                key.metadata == null ? [] : [key.metadata],
+              ),
+              (metadata) => decodeApiKeyMetadata(metadata).pipe(Effect.orDie),
             );
           }),
         )
@@ -331,6 +346,7 @@ export default Cloudflare.Worker(
     Effect.provide([
       Cloudflare.R2.ReadWriteBucketBinding,
       Cloudflare.KV.ReadWriteNamespaceBinding,
+      CryptoLive,
     ]),
   ),
 );

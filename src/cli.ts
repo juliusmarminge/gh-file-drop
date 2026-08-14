@@ -15,25 +15,24 @@
  *   env   (GHDROP_URL / GHDROP_API_KEY / GHDROP_ADMIN_TOKEN)
  *   file  (~/.config/ghdrop/config.json — written by `ghdrop login`)
  */
-import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { FileSystem } from "effect/FileSystem";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Argument from "effect/unstable/cli/Argument";
+import * as Command from "effect/unstable/cli/Command";
+import * as Flag from "effect/unstable/cli/Flag";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { HttpApiClient } from "effect/unstable/httpapi";
-import * as Path from "node:path";
-import { api } from "./api.ts";
-import {
-  configPath,
-  readStoredConfig,
-  type StoredConfig,
-  writeStoredConfig,
-} from "./config.ts";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { api, FileInfo } from "./api.ts";
+import { configPath, readStoredConfig, writeStoredConfig } from "./config.ts";
 
 class CliError extends Data.TaggedError("CliError")<{
   readonly message: string;
@@ -133,6 +132,11 @@ const asCliError = <A, E extends { readonly _tag: string }, R>(
     (error) => new CliError({ message: explain(error as never) }),
   );
 
+/** `--json` output, encoded through the same schema the server answers with. */
+const encodeResults = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Array(FileInfo), { space: 2 }),
+);
+
 /** Split a file URL (or bare key) into its `<id>/<name>` parts. */
 const splitKey = (target: string) => {
   const key = target.startsWith("http")
@@ -171,7 +175,8 @@ const upload = Command.make(
       });
     }
     const client = yield* clientFor("apiKey");
-    const fs = yield* FileSystem;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const results = [];
     for (const file of files) {
       const payload = yield* fs
@@ -181,7 +186,7 @@ const upload = Command.make(
             (e) => new CliError({ message: `cannot read ${file}: ${e.message}` }),
           ),
         );
-      const uploadName = Option.getOrElse(name, () => Path.basename(file));
+      const uploadName = Option.getOrElse(name, () => path.basename(file));
       results.push(
         yield* asCliError(
           client.files.upload({ query: { name: uploadName }, payload }),
@@ -189,7 +194,7 @@ const upload = Command.make(
       );
     }
     if (json) {
-      return yield* Console.log(JSON.stringify(results, null, 2));
+      return yield* Console.log(yield* encodeResults(results));
     }
     for (const result of results) {
       if (markdown) {
@@ -251,11 +256,14 @@ const login = Command.make(
   },
   Effect.fn(function* ({ serviceUrl }) {
     const root = yield* ghdrop;
-    const update: StoredConfig = { url: serviceUrl.replace(/\/+$/, "") };
-    if (Option.isSome(root.apiKey)) update.apiKey = root.apiKey.value;
-    if (Option.isSome(root.adminToken)) update.adminToken = root.adminToken.value;
-    const merged = yield* writeStoredConfig(update);
-    yield* Console.log(`saved ${configPath}`);
+    const merged = yield* writeStoredConfig({
+      url: serviceUrl.replace(/\/+$/, ""),
+      ...(Option.isSome(root.apiKey) ? { apiKey: root.apiKey.value } : {}),
+      ...(Option.isSome(root.adminToken)
+        ? { adminToken: root.adminToken.value }
+        : {}),
+    });
+    yield* Console.log(`saved ${yield* configPath}`);
     if (merged.apiKey === undefined && merged.adminToken === undefined) {
       yield* Console.log(
         "no credentials stored yet — run `ghdrop keys create --save` (needs the admin token) or `ghdrop login <url> --api-key <key>`",
@@ -286,7 +294,7 @@ const keysCreate = Command.make(
     const created = yield* asCliError(client.keys.create({ payload: { label } }));
     if (save) {
       yield* writeStoredConfig({ apiKey: created.apiKey });
-      yield* Console.log(`saved API key to ${configPath}`);
+      yield* Console.log(`saved API key to ${yield* configPath}`);
     }
     yield* Console.log(`apiKey: ${created.apiKey}`);
     yield* Console.log(`keyId:  ${created.keyId}`);

@@ -8,31 +8,28 @@
  */
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
-import {
-  HttpApi,
-  HttpApiEndpoint,
-  HttpApiError,
-  HttpApiGroup,
-  HttpApiMiddleware,
-  HttpApiSchema,
-  HttpApiSecurity,
-} from "effect/unstable/httpapi";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
+import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import * as HttpApiMiddleware from "effect/unstable/httpapi/HttpApiMiddleware";
+import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
+import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
 
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 // ── principal ────────────────────────────────────────────────────────────────
 
 /** Who is making the request, resolved by the auth middleware. */
-export interface PrincipalShape {
-  /** Short id of the API key, or "admin" for the root token. */
-  readonly keyId: string;
-  readonly label: string;
-  readonly admin: boolean;
-}
-
-export class Principal extends Context.Service<Principal, PrincipalShape>()(
-  "ghdrop/Principal",
-) {}
+export class Principal extends Context.Service<
+  Principal,
+  {
+    /** Short id of the API key, or "admin" for the root token. */
+    readonly keyId: string;
+    readonly label: string;
+    readonly admin: boolean;
+  }
+>()("ghdrop/Principal") {}
 
 /** Any valid API key (or the admin token). */
 export class Authorization extends HttpApiMiddleware.Service<

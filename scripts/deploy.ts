@@ -8,20 +8,24 @@
  * purely user-facing. It needs the repo: the Alchemy stack is the source of
  * truth for the deployment.
  */
-import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
+import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { FileSystem } from "effect/FileSystem";
-import { Prompt } from "effect/unstable/cli";
+import * as Encoding from "effect/Encoding";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as Prompt from "effect/unstable/cli/Prompt";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { HttpApiClient } from "effect/unstable/httpapi";
-import * as ChildProcess from "node:child_process";
-import * as Crypto from "node:crypto";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as Os from "node:os";
-import * as Path from "node:path";
 import { api } from "../src/api.ts";
 import {
   configPath,
@@ -50,44 +54,60 @@ const confirmOr = Effect.fn(function* (
   );
 });
 
-/** Run a command, echoing its output while capturing it. */
+/** Run a command, echoing its output to this terminal while capturing it. */
 const runCapture = (
   command: string,
   args: ReadonlyArray<string>,
-  env?: NodeJS.ProcessEnv,
+  env?: Record<string, string | undefined>,
 ) =>
-  Effect.callback<{ code: number; output: string }, DeployError>((resume) => {
-    const child = ChildProcess.spawn(command, [...args], {
-      stdio: ["inherit", "pipe", "pipe"],
-      env: env ?? process.env,
-    });
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(command, [...args], {
+        // stdin stays attached so `alchemy` can prompt on first authentication.
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      }),
+    );
+
+    const decoder = new TextDecoder();
     let output = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      process.stdout.write(chunk);
+    const pump = (
+      stream: Stream.Stream<Uint8Array, unknown>,
+      to: NodeJS.WriteStream,
+    ) =>
+      Stream.runForEach(stream, (chunk) =>
+        Effect.sync(() => {
+          output += decoder.decode(chunk, { stream: true });
+          to.write(chunk);
+        }),
+      );
+
+    yield* Effect.all([pump(handle.stdout, process.stdout), pump(handle.stderr, process.stderr)], {
+      concurrency: "unbounded",
     });
-    child.stderr.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      process.stderr.write(chunk);
-    });
-    child.on("error", (error) =>
-      resume(
-        Effect.fail(
-          new DeployError({
-            message: `failed to run ${command}: ${error.message}`,
-          }),
-        ),
-      ),
-    );
-    child.on("close", (code) =>
-      resume(Effect.succeed({ code: code ?? 1, output })),
-    );
-  });
+    return { code: Number(yield* handle.exitCode), output };
+  }).pipe(
+    Effect.scoped,
+    Effect.mapError(
+      (error) =>
+        new DeployError({ message: `failed to run ${command}: ${error}` }),
+    ),
+  );
 
 const commandExists = (bin: string) =>
-  Effect.sync(
-    () => ChildProcess.spawnSync("which", [bin], { stdio: "ignore" }).status === 0,
-  );
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const code = yield* spawner.exitCode(
+      ChildProcess.make("which", [bin], {
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    );
+    return Number(code) === 0;
+  }).pipe(Effect.orElseSucceed(() => false));
 
 /**
  * Find the admin token (env → .env → config file), or generate one and
@@ -97,7 +117,7 @@ const ensureAdminToken = Effect.gen(function* () {
   const fromEnv = process.env.GHDROP_ADMIN_TOKEN;
   if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
 
-  const fs = yield* FileSystem;
+  const fs = yield* FileSystem.FileSystem;
   const envText = yield* fs
     .readFileString(".env")
     .pipe(Effect.catchCause(() => Effect.succeed("")));
@@ -118,7 +138,8 @@ const ensureAdminToken = Effect.gen(function* () {
         "deploy needs an admin token — set GHDROP_ADMIN_TOKEN or add it to .env",
     });
   }
-  const token = Crypto.randomBytes(32).toString("hex");
+  const cryptography = yield* Crypto.Crypto;
+  const token = Encoding.encodeHex(yield* cryptography.randomBytes(32));
   const updated =
     envText.length === 0 || envText.endsWith("\n") ? envText : `${envText}\n`;
   yield* fs.writeFileString(".env", `${updated}GHDROP_ADMIN_TOKEN=${token}\n`);
@@ -127,14 +148,21 @@ const ensureAdminToken = Effect.gen(function* () {
 });
 
 /** Where pnpm puts globally linked binaries. */
-const globalBinDir = () =>
-  process.env.PNPM_HOME ??
-  (process.platform === "darwin"
-    ? Path.join(Os.homedir(), "Library", "pnpm")
-    : Path.join(Os.homedir(), ".local", "share", "pnpm"));
+const globalBinDir = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return (
+    process.env.PNPM_HOME ??
+    (process.platform === "darwin"
+      ? path.join(Os.homedir(), "Library", "pnpm")
+      : path.join(Os.homedir(), ".local", "share", "pnpm"))
+  );
+});
+
+/** `Path` models file separators, not the PATH variable's own delimiter. */
+const pathDelimiter = process.platform === "win32" ? ";" : ":";
 
 const onPath = (dir: string) =>
-  (process.env.PATH ?? "").split(Path.delimiter).includes(dir);
+  (process.env.PATH ?? "").split(pathDelimiter).includes(dir);
 
 /**
  * Put `ghdrop` on PATH from this checkout — the difference between the service
@@ -163,8 +191,8 @@ const linkGlobally = Effect.gen(function* () {
   // pnpm refuses to link unless its global bin directory exists and is on
   // PATH, so give the child process both — `pnpm setup` is then only needed
   // to make the directory permanent, not to make this link work.
-  const dir = globalBinDir();
-  const fs = yield* FileSystem;
+  const dir = yield* globalBinDir;
+  const fs = yield* FileSystem.FileSystem;
   yield* fs
     .makeDirectory(dir, { recursive: true })
     .pipe(Effect.catchCause(() => Effect.void));
@@ -172,7 +200,7 @@ const linkGlobally = Effect.gen(function* () {
   const { code } = yield* runCapture(command, args, {
     ...process.env,
     PNPM_HOME: dir,
-    PATH: `${dir}${Path.delimiter}${process.env.PATH ?? ""}`,
+    PATH: `${dir}${pathDelimiter}${process.env.PATH ?? ""}`,
   });
   if (code !== 0) {
     yield* Console.log(`\n\`${hint}\` failed — run it manually to use \`ghdrop\``);
@@ -202,7 +230,7 @@ const linkGlobally = Effect.gen(function* () {
 });
 
 const deploy = Effect.gen(function* () {
-  const fs = yield* FileSystem;
+  const fs = yield* FileSystem.FileSystem;
   if (
     !(yield* fs.exists("alchemy.run.ts").pipe(Effect.orElseSucceed(() => false)))
   ) {
@@ -238,12 +266,12 @@ const deploy = Effect.gen(function* () {
 
   const save = yield* confirmOr(
     true,
-    `Save ${url} (and the admin token) to ${configPath}?`,
+    `Save ${url} (and the admin token) to ${yield* configPath}?`,
     true,
   );
   if (save) {
     yield* writeStoredConfig({ url, adminToken });
-    yield* Console.log(`saved ${configPath}`);
+    yield* Console.log(`saved ${yield* configPath}`);
   }
 
   const stored = yield* readStoredConfig;
