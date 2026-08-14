@@ -44,6 +44,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import Stack from "../alchemy.run.ts";
+import pkg from "../package.json" with { type: "json" };
 import { api } from "../src/api.ts";
 import { configPath, readStoredConfig, writeStoredConfig } from "../src/config.ts";
 
@@ -471,7 +472,7 @@ const keys = Command.make("keys").pipe(
 
 admin.pipe(
   Command.withSubcommands([deploy, keys]),
-  Command.run({ version: "0.1.2" }),
+  Command.run({ version: pkg.version }),
   Effect.catchTag("AdminError", (error) =>
     Console.error(`error: ${error.message}`).pipe(
       Effect.andThen(Effect.sync(() => process.exit(1))),

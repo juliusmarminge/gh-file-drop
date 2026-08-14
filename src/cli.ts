@@ -24,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Argument from "effect/unstable/cli/Argument";
 import * as Command from "effect/unstable/cli/Command";
 import * as Flag from "effect/unstable/cli/Flag";
@@ -31,7 +32,10 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import pkg from "../package.json" with { type: "json" };
 import { api, FileInfo } from "./api.ts";
 import { configPath, readStoredConfig, writeStoredConfig } from "./config.ts";
 
@@ -234,11 +238,171 @@ const login = Command.make(
   }),
 ).pipe(Command.withDescription("Store the service URL and credentials in the config file"));
 
+// ── update ───────────────────────────────────────────────────────────────────
+
+/** Single source of truth for the version — no second place to bump. */
+const VERSION = pkg.version;
+
+const DEFAULT_REPO = "juliusmarminge/gh-file-drop";
+
+/** The release asset matching the machine this binary is running on. */
+const assetName = () => {
+  if (process.platform === "win32") return "ghdrop-win-x64.exe";
+  const os = process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "arm64" : "x64";
+  return `ghdrop-${os}-${arch}`;
+};
+
+/** Run a command, capturing stdout; stderr is surfaced in the error. */
+const run = (command: string, args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(command, [...args], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
+    const decoder = new TextDecoder();
+    let out = "";
+    let err = "";
+    const drain = (stream: Stream.Stream<Uint8Array, unknown>, onChunk: (text: string) => void) =>
+      Stream.runForEach(stream, (chunk) =>
+        Effect.sync(() => onChunk(decoder.decode(chunk, { stream: true }))),
+      );
+    yield* Effect.all(
+      [drain(handle.stdout, (t) => (out += t)), drain(handle.stderr, (t) => (err += t))],
+      { concurrency: "unbounded" },
+    );
+    return { code: Number(yield* handle.exitCode), out, err };
+  }).pipe(
+    Effect.scoped,
+    Effect.mapError(() => new CliError({ message: `could not run \`${command}\`` })),
+  );
+
+const update = Command.make(
+  "update",
+  {
+    method: Flag.choice("method", ["gh"]).pipe(
+      Flag.withDefault("gh"),
+      Flag.withDescription("How to fetch the release (gh: GitHub CLI)"),
+    ),
+    force: Flag.boolean("force").pipe(
+      Flag.withDescription("Reinstall even if already on the latest version"),
+    ),
+    repo: Flag.string("repo").pipe(
+      Flag.withDefault(DEFAULT_REPO),
+      Flag.withDescription("GitHub repository to fetch releases from"),
+    ),
+  },
+  Effect.fn(function* ({ force, repo }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const target = process.execPath;
+
+    // A SEA runs as itself; from source, execPath is `node`, and there would
+    // be no binary to replace.
+    if (/(^|\/|\\)node(\.exe)?$/.test(target)) {
+      return yield* new CliError({
+        message: "`update` only works on the standalone binary — this is running from source",
+      });
+    }
+
+    const gh = yield* run("which", ["gh"]);
+    if (gh.code !== 0) {
+      return yield* new CliError({
+        message:
+          "`gh` is not installed — it is needed to download from a private repo (https://cli.github.com)",
+      });
+    }
+
+    const latest = yield* run("gh", [
+      "release",
+      "view",
+      "-R",
+      repo,
+      "--json",
+      "tagName",
+      "-q",
+      ".tagName",
+    ]);
+    if (latest.code !== 0) {
+      return yield* new CliError({
+        message: `could not read the latest release: ${latest.err.trim() || "is `gh` authenticated?"}`,
+      });
+    }
+    const tag = latest.out.trim();
+    if (tag === `v${VERSION}` && !force) {
+      return yield* Console.log(`already on the latest version (${tag})`);
+    }
+
+    // Stage the download beside the current binary so the swap is a rename
+    // within one filesystem rather than a copy across devices.
+    const staged = `${target}.new`;
+    yield* Console.log(`downloading ${assetName()} ${tag}…`);
+    const download = yield* run("gh", [
+      "release",
+      "download",
+      tag,
+      "-R",
+      repo,
+      "-p",
+      assetName(),
+      "-O",
+      staged,
+      "--clobber",
+    ]);
+    if (download.code !== 0) {
+      yield* fs.remove(staged).pipe(Effect.catchCause(() => Effect.void));
+      const detail = download.err.trim();
+      return yield* new CliError({
+        message: /permission denied/i.test(detail)
+          ? `cannot write into ${path.dirname(target)} — re-run somewhere writable, or reinstall by hand`
+          : `download failed: ${detail || `no ${assetName()} in ${tag}?`}`,
+      });
+    }
+
+    yield* fs
+      .chmod(staged, 0o755)
+      .pipe(Effect.mapError(() => new CliError({ message: `cannot make ${staged} executable` })));
+
+    // Never swap in something that cannot run.
+    const check = yield* run(staged, ["--version"]);
+    if (check.code !== 0) {
+      yield* fs.remove(staged).pipe(Effect.catchCause(() => Effect.void));
+      return yield* new CliError({
+        message: "the downloaded binary failed to run — leaving the current one in place",
+      });
+    }
+
+    // Windows refuses to replace a running executable, so move it aside first.
+    const previous = `${target}.old`;
+    if (process.platform === "win32") {
+      yield* fs.rename(target, previous).pipe(Effect.catchCause(() => Effect.void));
+    }
+    yield* fs.rename(staged, target).pipe(
+      Effect.mapError(
+        () =>
+          new CliError({
+            message: `cannot replace ${target} — check permissions (a sudo-owned location needs sudo)`,
+          }),
+      ),
+    );
+    yield* fs.remove(previous).pipe(Effect.catchCause(() => Effect.void));
+
+    yield* Console.log(`updated ${VERSION} → ${check.out.trim().replace(/^ghdrop v?/, "")}`);
+  }),
+).pipe(
+  Command.withDescription("Replace this binary with the latest release"),
+  Command.withExamples([{ command: "ghdrop update", description: "Update to the latest release" }]),
+);
+
 // ── run ──────────────────────────────────────────────────────────────────────
 
 ghdrop.pipe(
-  Command.withSubcommands([upload, del, login]),
-  Command.run({ version: "0.1.2" }),
+  Command.withSubcommands([upload, del, login, update]),
+  Command.run({ version: VERSION }),
   Effect.catchTag("CliError", (error) =>
     Console.error(`error: ${error.message}`).pipe(
       Effect.andThen(Effect.sync(() => process.exit(1))),

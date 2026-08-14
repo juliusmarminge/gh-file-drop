@@ -9,6 +9,7 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
+    "resolveJsonModule": true,
     "types": ["node"]
   },
   "include": ["alchemy.run.ts", "vite.config.ts", "scripts", "src"]

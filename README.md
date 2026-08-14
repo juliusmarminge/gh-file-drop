@@ -34,6 +34,7 @@ ghdrop upload -m before.png after.png    # Markdown, ready to paste into a PR
 ghdrop upload --json report.html         # machine-readable output
 ghdrop upload -n renamed.txt notes.txt   # override the stored filename
 ghdrop delete <url>
+ghdrop update                            # replace this binary with the latest release
 ```
 
 Settings resolve from flags, then `GHDROP_URL` / `GHDROP_API_KEY`, then
