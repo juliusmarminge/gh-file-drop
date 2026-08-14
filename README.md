@@ -104,15 +104,20 @@ Ship the binaries as GitHub release assets:
 
 ```sh
 pnpm build:all
-gh release create v0.1.0 build/ghdrop-* --title "ghdrop v0.1.0"
+gh release create v0.2.0 build/ghdrop-* --title "ghdrop v0.2.0"
 ```
 
 Users then install with one line:
 
 ```sh
-curl -fsSL https://github.com/<owner>/gh-file-drop/releases/latest/download/ghdrop-darwin-arm64 \
+curl -fsSL https://github.com/juliusmarminge/gh-file-drop/releases/latest/download/ghdrop-darwin-arm64 \
   -o /usr/local/bin/ghdrop && chmod +x /usr/local/bin/ghdrop
 ```
+
+Assets are `ghdrop-darwin-arm64`, `ghdrop-darwin-x64`, `ghdrop-linux-x64`,
+`ghdrop-linux-arm64`, `ghdrop-win-x64.exe`. The repo is private, so `curl` needs
+a token — collaborators can use `gh release download v0.1.0 -p ghdrop-darwin-arm64`
+instead, which uses their existing `gh` auth.
 
 and point it at the service once:
 
