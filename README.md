@@ -52,7 +52,9 @@ vpr deploy          # deploy the stack, then set this machine up
 ```
 
 `vpr deploy` runs `alchemy deploy`, saves the service URL, mints an API key for
-this machine, and offers to put `ghdrop` on your PATH. The admin token is an
+this machine, and offers to link `ghdrop` onto your PATH from the checkout —
+though installing a released binary (above) is usually better, since only that
+can `ghdrop update` itself. The admin token is an
 `Alchemy.Random` resource — generated once, kept in alchemy state, bound to the
 Worker as a secret — so there is no `.env`, and it never reaches a user's
 config.
