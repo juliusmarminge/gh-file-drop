@@ -8,6 +8,7 @@
   },
   "type": "module",
   "scripts": {
+    "prepare": "vp config --no-agent",
     "admin": "node scripts/admin.ts",
     "deploy": "node scripts/admin.ts deploy",
     "keys": "node scripts/admin.ts keys",
