@@ -1,6 +1,6 @@
 {
   "name": "gh-file-drop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Upload files to a public URL for sharing in GitHub PRs (Cloudflare Worker + R2)",
   "bin": {

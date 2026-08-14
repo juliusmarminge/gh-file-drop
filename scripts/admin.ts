@@ -461,7 +461,7 @@ const keys = Command.make("keys").pipe(
 
 admin.pipe(
   Command.withSubcommands([deploy, keys]),
-  Command.run({ version: "0.1.1" }),
+  Command.run({ version: "0.1.2" }),
   Effect.catchTag("AdminError", (error) =>
     Console.error(`error: ${error.message}`).pipe(
       Effect.andThen(Effect.sync(() => process.exit(1))),

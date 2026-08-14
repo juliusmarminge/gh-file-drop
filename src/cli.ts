@@ -238,7 +238,7 @@ const login = Command.make(
 
 ghdrop.pipe(
   Command.withSubcommands([upload, del, login]),
-  Command.run({ version: "0.1.1" }),
+  Command.run({ version: "0.1.2" }),
   Effect.catchTag("CliError", (error) =>
     Console.error(`error: ${error.message}`).pipe(
       Effect.andThen(Effect.sync(() => process.exit(1))),
