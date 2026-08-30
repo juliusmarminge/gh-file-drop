@@ -11,7 +11,6 @@ import * as Scope from "effect/Scope";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
 
@@ -24,6 +23,7 @@ import {
   MAX_UPLOAD_BYTES,
   Principal,
 } from "./api.ts";
+import { downloadFile } from "./download.ts";
 import { AdminToken, ApiKeys, Files } from "./resources.ts";
 
 /** Workers expose WebCrypto as a global rather than an Effect service. */
@@ -111,7 +111,20 @@ export default Cloudflare.Worker(
     // Storage failures are infrastructure defects, not part of the API
     // contract — they surface as 500s rather than typed errors.
     const bucket = {
-      get: (key: string) => files.get(key).pipe(Effect.orDie),
+      head: (key: string) => files.head(key).pipe(Effect.orDie),
+      get: (key: string, options?: { range: { offset: number; length: number } }) =>
+        files.raw.pipe(
+          Effect.flatMap((raw) => Effect.promise(() => raw.get(key, options))),
+          Effect.map((object) =>
+            object === null
+              ? null
+              : {
+                  ...object,
+                  // Cloudflare and Node declare different Web Stream types.
+                  body: object.body as unknown as ReadableStream<Uint8Array>,
+                },
+          ),
+        ),
       put: (
         key: string,
         value: Uint8Array,
@@ -226,18 +239,7 @@ export default Cloudflare.Worker(
             if (!FILE_KEY_PATTERN.test(key)) {
               return yield* new HttpApiError.NotFound();
             }
-            const object = yield* bucket.get(key);
-            if (object === null) {
-              return yield* new HttpApiError.NotFound();
-            }
-            return HttpServerResponse.stream(object.body, {
-              contentType: object.httpMetadata?.contentType ?? "application/octet-stream",
-              headers: {
-                "cache-control": "public, max-age=31536000, immutable",
-                etag: object.httpEtag,
-                "content-length": String(object.size),
-              },
-            });
+            return yield* downloadFile(bucket, key);
           }),
         )
         .handle(
