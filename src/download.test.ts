@@ -5,7 +5,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
@@ -48,7 +47,14 @@ const setup = (
     const range = options_?.range;
     return Effect.succeed({
       ...object,
-      body: Stream.succeed(range ? bytes.slice(range.offset, range.offset + range.length) : bytes),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            range ? bytes.slice(range.offset, range.offset + range.length) : bytes,
+          );
+          controller.close();
+        },
+      }),
     });
   });
   const handlers = HttpApiBuilder.group(testApi, "files", (handlers) =>

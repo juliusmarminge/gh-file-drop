@@ -113,7 +113,18 @@ export default Cloudflare.Worker(
     const bucket = {
       head: (key: string) => files.head(key).pipe(Effect.orDie),
       get: (key: string, options?: { range: { offset: number; length: number } }) =>
-        files.get(key, options).pipe(Effect.orDie),
+        files.raw.pipe(
+          Effect.flatMap((raw) => Effect.promise(() => raw.get(key, options))),
+          Effect.map((object) =>
+            object === null
+              ? null
+              : {
+                  ...object,
+                  // Cloudflare and Node declare different Web Stream types.
+                  body: object.body as unknown as ReadableStream<Uint8Array>,
+                },
+          ),
+        ),
       put: (
         key: string,
         value: Uint8Array,

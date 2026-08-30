@@ -1,5 +1,4 @@
 import * as Effect from "effect/Effect";
-import type * as Stream from "effect/Stream";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApiError from "effect/unstable/httpapi/HttpApiError";
@@ -20,7 +19,7 @@ export interface DownloadBucket<R> {
   get(
     key: string,
     options?: { range: ByteRange },
-  ): Effect.Effect<(FileMetadata & { body: Stream.Stream<Uint8Array, unknown> }) | null, never, R>;
+  ): Effect.Effect<(FileMetadata & { body: ReadableStream<Uint8Array> }) | null, never, R>;
 }
 
 // Ignore malformed, unknown-unit and multipart ranges, serving the full file.
@@ -88,7 +87,10 @@ export const downloadFile = <R>(bucket: DownloadBucket<R>, key: string) =>
     const object = yield* bucket.get(key, range ? { range } : undefined);
     if (object === null) return yield* new HttpApiError.NotFound();
 
-    return HttpServerResponse.stream(object.body, {
+    // Preserve R2's native stream, which carries its byte length in workerd.
+    // Converting through an Effect stream loses that length and causes the
+    // runtime to discard Content-Length, even when the header is set here.
+    return HttpServerResponse.raw(object.body, {
       status: range ? 206 : 200,
       contentLength: range?.length ?? object.size,
       headers: {
