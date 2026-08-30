@@ -20,7 +20,8 @@
     "check": "vp check",
     "fmt": "vp fmt",
     "lint": "vp lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/*.test.ts"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-rc.109",

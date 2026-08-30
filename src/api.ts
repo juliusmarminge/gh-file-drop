@@ -97,9 +97,10 @@ const upload = HttpApiEndpoint.post("upload", "/files", {
 const download = HttpApiEndpoint.get("download", "/f/:id/:name", {
   params: { id: Schema.String, name: Schema.String },
   // The handler returns the object's real content type, so browsers and GitHub
-  // render images and video inline.
+  // render images and video inline. Range requests return raw 206 responses;
+  // Effect only allows one streaming success schema per endpoint.
   success: HttpApiSchema.StreamUint8Array(),
-  error: HttpApiError.NotFound,
+  error: [HttpApiError.NotFound, HttpApiSchema.Empty(416)],
 });
 
 const remove = HttpApiEndpoint.delete("delete", "/f/:id/:name", {
