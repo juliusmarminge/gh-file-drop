@@ -18,6 +18,13 @@ import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
 
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
+/**
+ * Longest stored filename. Download and delete URLs carry it as one path
+ * segment, so the router must accept parameters at least this long; its default
+ * limit of 100 silently 404s longer names.
+ */
+export const MAX_NAME_LENGTH = 128;
+
 // ── principal ────────────────────────────────────────────────────────────────
 
 /** Who is making the request, resolved by the auth middleware. */

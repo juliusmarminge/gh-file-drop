@@ -12,7 +12,7 @@ import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
 
-import { FilesGroup } from "./api.ts";
+import { FilesGroup, MAX_NAME_LENGTH } from "./api.ts";
 import { downloadFile, type DownloadBucket } from "./download.ts";
 
 const testApi = HttpApi.make("test").add(
@@ -64,7 +64,7 @@ const setup = (
   );
   const app = HttpRouter.toWebHandler(
     HttpApiBuilder.layer(testApi).pipe(Layer.provide(handlers), Layer.provide(platform)),
-    { disableLogger: true },
+    { disableLogger: true, routerConfig: { maxParamLength: MAX_NAME_LENGTH } },
   );
   return { ...app, head, get };
 };
@@ -213,4 +213,14 @@ await test("a range on an empty object returns 416", async (t) => {
   assert.equal(response.status, 416);
   assert.equal(response.headers.get("content-range"), "bytes */0");
   assert.equal(app.get.mock.callCount(), 0);
+});
+
+await test("names up to the upload limit are routable", async (t) => {
+  const app = setup();
+  t.after(app.dispose);
+  const name = `${"a".repeat(MAX_NAME_LENGTH - 4)}.mp4`;
+  const response = await app.handler(new Request(`https://ghdrop.test/f/0123456789abcdef/${name}`));
+  assert.equal(response.status, 200);
+  assert.deepEqual(app.get.mock.calls[0].arguments, [`0123456789abcdef/${name}`, undefined]);
+  await response.text();
 });
