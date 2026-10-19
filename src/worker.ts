@@ -20,6 +20,7 @@ import {
   ApiKeyInfo,
   Authorization,
   FileTooLarge,
+  MAX_NAME_LENGTH,
   MAX_UPLOAD_BYTES,
   Principal,
 } from "./api.ts";
@@ -75,7 +76,7 @@ const sanitizeName = (name: string) => {
   const safe = base
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^[.-]+/, "")
-    .slice(0, 128);
+    .slice(0, MAX_NAME_LENGTH);
   return safe.length > 0 ? safe : "file.bin";
 };
 
@@ -320,7 +321,9 @@ export default Cloudflare.Worker(
     // workerd has no filesystem; nothing in this API serves files by path.
     const FileSystemLive = FileSystem.layerNoop({});
     const PlatformLive = Layer.mergeAll(
-      HttpRouter.layer,
+      HttpRouter.layer.pipe(
+        Layer.provide(Layer.succeed(HttpRouter.RouterConfig)({ maxParamLength: MAX_NAME_LENGTH })),
+      ),
       HttpPlatform.layer.pipe(Layer.provide(FileSystemLive)),
       FileSystemLive,
       Etag.layerWeak,
